@@ -1,0 +1,9 @@
+.git
+.idea
+packages
+EnhancedCommands.sln
+EnhancedCommands.sln.DotSettings.user
+EnhancedCommands/bin
+EnhancedCommands/obj
+EnhancedCommands/packages.config
+EnhancedCommands/Properties
