@@ -278,6 +278,7 @@ This is useful for grouping related functionality under a single command, like c
 
 ### Step 1: Create the Sub-Commands First, create your sub-commands as regular SyncCommand or AsyncCommand classes. Do not give them a [CommandHandler] attribute, as the parent will be responsible for registration.
 ```csharp
+// No need to mark with CommandHandler
 [Command("sync", new[] { "s" }, "A synchronous sub-command.")]
 [CommandPermission("example.sync")]
 public class SubCommandSync : SyncCommand { /* ... logic from previous examples ... */ }
