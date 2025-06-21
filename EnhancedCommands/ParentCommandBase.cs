@@ -48,8 +48,18 @@ namespace EnhancedCommands
 
             if (arguments.Count == 0)
             {
-                response = GenerateHelpMessage();
-                return false;
+                try
+                {
+                    var context = new CommandContext(sender, new CommandArguments(arguments));
+                    var cresponse = OnExecuteParent(context);
+                    response = cresponse.Message;
+                    return cresponse.IsSuccess;
+                }
+                catch (NotImplementedException)
+                {
+                    response = GenerateHelpMessage();
+                    return false;
+                }
             }
 
             string subCommandName = arguments.At(0);
@@ -63,6 +73,8 @@ namespace EnhancedCommands
             
             return subCommand.Execute(subCommandArguments, sender, out response);
         }
+
+        public virtual CommandResponse OnExecuteParent(CommandContext context) => throw new NotImplementedException($"OnExecuteParent is not defined");
 
         private void RegisterSubCommands()
         {
