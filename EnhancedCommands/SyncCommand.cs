@@ -23,7 +23,7 @@ namespace EnhancedCommands
         
         public virtual IReadOnlyList<ArgumentDefinition> ArgumentsDefinition { get; } = null;
 
-        public bool SanitizeResponse { get; } = false;
+        public virtual bool SanitizeResponse { get; } = false;
 
         protected SyncCommand()
         {
