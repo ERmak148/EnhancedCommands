@@ -116,11 +116,11 @@ namespace EnhancedCommands
             HashSet<string> usedDefinitions = new HashSet<string>();
             errorMessage = string.Empty;
             
-            foreach (ArgumentDefinition definition in ArgumentsDefinition)
-            {
-                if (definition.IsOptional)
-                    parsedArgs[definition.Name] = definition.Type.IsValueType ? Activator.CreateInstance(definition.Type) : null;
-            }
+            // foreach (ArgumentDefinition definition in ArgumentsDefinition)
+            // {
+            //     if (definition.IsOptional)
+            //         parsedArgs[definition.Name] = definition.Type.IsValueType ? Activator.CreateInstance(definition.Type) : null;
+            // }
 
             int argIndex = 0;
             for (int i = 0; i < rawArgs.Count; i++)
