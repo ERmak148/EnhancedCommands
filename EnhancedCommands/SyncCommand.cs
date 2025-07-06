@@ -46,9 +46,9 @@ namespace EnhancedCommands
         protected virtual CommandResponse OnExecuteSync(CommandContext context) =>
             throw new NotImplementedException($"Command {GetType().Name} must override one of the OnExecuteSync methods.");
 
-        protected virtual CommandResponse OnExecuteSync(CommandContext context, object[] args) =>
+        protected virtual CommandResponse OnExecuteSync(CommandContext context, Dictionary<string, object> args) =>
             throw new NotImplementedException($"Command {GetType().Name} must override one of the OnExecuteSync methods.");
-
+        
         public bool Execute(ArraySegment<string> arguments, ICommandSender sender, out string response)
         {
             if (_permissionAttribute != null && !sender.CheckPermission(_permissionAttribute.Permission))
@@ -110,17 +110,16 @@ namespace EnhancedCommands
             }
         }
         
-        private bool TryParseArguments(CommandArguments rawArgs, out object[] parsedArgs, out string errorMessage)
+        private bool TryParseArguments(CommandArguments rawArgs, out Dictionary<string, object> parsedArgs, out string errorMessage)
         {
-            Dictionary<string, object> results = new Dictionary<string, object>();
+            parsedArgs = new Dictionary<string, object>();
             HashSet<string> usedDefinitions = new HashSet<string>();
-            parsedArgs = null;
             errorMessage = string.Empty;
             
             foreach (ArgumentDefinition definition in ArgumentsDefinition)
             {
                 if (definition.IsOptional)
-                    results[definition.Name] = definition.Type.IsValueType ? Activator.CreateInstance(definition.Type) : null;
+                    parsedArgs[definition.Name] = definition.Type.IsValueType ? Activator.CreateInstance(definition.Type) : null;
             }
 
             int argIndex = 0;
@@ -175,7 +174,7 @@ namespace EnhancedCommands
                     if (argName != null)
                     {
                         var remaining = string.Join(" ", rawArgs.Skip(i));
-                        results[definition.Name] = remaining;
+                        parsedArgs[definition.Name] = remaining;
                         i = rawArgs.Count;
                     }
                     else
@@ -185,7 +184,7 @@ namespace EnhancedCommands
                             errorMessage = $"Greedy argument '{definition.Name}' must be the last argument.";
                             return false;
                         }
-                        results[definition.Name] = string.Join(" ", rawArgs.Skip(i));
+                        parsedArgs[definition.Name] = string.Join(" ", rawArgs.Skip(i));
                         i = rawArgs.Count;
                     }
                 }
@@ -196,7 +195,7 @@ namespace EnhancedCommands
                         errorMessage = $"Invalid value for argument '{definition.Name}': {parseError}";
                         return false;
                     }
-                    results[definition.Name] = parsedValue;
+                    parsedArgs[definition.Name] = parsedValue;
                 }
 
                 usedDefinitions.Add(definition.Name);
@@ -211,7 +210,6 @@ namespace EnhancedCommands
                 }
             }
 
-            parsedArgs = ArgumentsDefinition.Select(d => results.ContainsKey(d.Name) ? results[d.Name] : null).ToArray();
             return true;
         }
 
