@@ -219,11 +219,11 @@ namespace EnhancedCommands
             foreach (var definition in ArgumentsDefinition)
             {
                 if (definition.IsOptional)
-                    sb.Append($"[{definition.Name} ({nameof(definition.Type)})] ");
+                    sb.Append($"[{definition.Name} ({definition.Type.Name})] ");
                 else if(definition.IsNeedManyWords)
-                    sb.Append($"<{definition.Name} ({nameof(definition.Type)})...> ");
+                    sb.Append($"<{definition.Name} ({definition.Type.Name})...> ");
                 else
-                    sb.Append($"<{definition.Name} ({nameof(definition.Type)})> ");
+                    sb.Append($"<{definition.Name} ({definition.Type.Name})> ");
             }
             return sb.ToString().Trim();
         }
