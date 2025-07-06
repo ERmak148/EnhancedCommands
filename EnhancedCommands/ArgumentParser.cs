@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
 using Exiled.API.Features;
@@ -12,7 +13,6 @@ namespace EnhancedCommands
             result = null;
             error = string.Empty;
 
-            // Обработка простых типов
             if (type == typeof(string)) { result = value; return true; }
             if (type == typeof(int)) { if (int.TryParse(value, out var i)) { result = i; return true; } error = "Expected a whole number."; return false; }
             if (type == typeof(float)) { if (float.TryParse(value, out var f)) { result = f; return true; } error = "Expected a number."; return false; }
@@ -45,7 +45,7 @@ namespace EnhancedCommands
                 error = "Player not found.";
                 return false;
             }
-            
+
             if (constructor == null)
             {
                 constructor = type.GetConstructors()
@@ -73,8 +73,8 @@ namespace EnhancedCommands
                     return false;
                 }
             }
-            
-            var argValues = value.Split(',').Select(v => v.Trim()).ToArray();
+
+            var argValues = SplitArguments(value, parameters.Length);
             if (argValues.Length != parameters.Length)
             {
                 error = $"Expected {parameters.Length} arguments for '{type.Name}', but got {argValues.Length}.";
@@ -103,6 +103,50 @@ namespace EnhancedCommands
                 error = $"Failed to create instance of '{type.Name}' with provided arguments: {ex.Message}";
                 return false;
             }
+        }
+
+        private static string[] SplitArguments(string input, int expectedCount)
+        {
+            var results = new List<string>();
+            int bracketLevel = 0;
+            bool inQuotes = false;
+            string current = "";
+
+            for (int i = 0; i < input.Length; i++)
+            {
+                char c = input[i];
+                if (c == '[' && !inQuotes)
+                {
+                    bracketLevel++;
+                    current += c;
+                }
+                else if (c == ']' && !inQuotes)
+                {
+                    bracketLevel--;
+                    current += c;
+                }
+                else if (c == '"' && (i == 0 || input[i - 1] != '\\'))
+                {
+                    inQuotes = !inQuotes;
+                    current += c;
+                }
+                else if (c == ',' && bracketLevel == 0 && !inQuotes)
+                {
+                    results.Add(current.Trim());
+                    current = "";
+                }
+                else
+                {
+                    current += c;
+                }
+            }
+
+            if (!string.IsNullOrEmpty(current))
+            {
+                results.Add(current.Trim());
+            }
+
+            return results.ToArray();
         }
     }
 }

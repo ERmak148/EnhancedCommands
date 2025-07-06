@@ -170,7 +170,7 @@ namespace EnhancedCommands
                 string currentArg = rawArgs[i];
                 string argName = null;
                 string argValue = currentArg;
-                
+
                 if (currentArg.Contains(":"))
                 {
                     var parts = currentArg.Split(new[] { ':' }, 2);
@@ -205,7 +205,7 @@ namespace EnhancedCommands
                     }
                     argIndex++;
                 }
-                
+
                 if (definition.IsNeedManyWords)
                 {
                     if (definition.Type != typeof(string))
@@ -232,7 +232,7 @@ namespace EnhancedCommands
                 }
                 else
                 {
-                    if (!ArgumentParser.TryParse(argValue, definition.Type, out var parsedValue, out var parseError))
+                    if (!ArgumentParser.TryParse(argValue, definition.Type, out var parsedValue, out var parseError, definition.Constructor))
                     {
                         errorMessage = $"Invalid value for argument '{definition.Name}': {parseError}";
                         return false;
@@ -251,10 +251,11 @@ namespace EnhancedCommands
                     return false;
                 }
             }
-            
+
             parsedArgs = ArgumentsDefinition.Select(d => results.ContainsKey(d.Name) ? results[d.Name] : null).ToArray();
             return true;
         }
+
 
         private string GenerateUsageFromDefinition()
         {
