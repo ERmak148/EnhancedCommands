@@ -112,61 +112,106 @@ namespace EnhancedCommands
         
         private bool TryParseArguments(CommandArguments rawArgs, out object[] parsedArgs, out string errorMessage)
         {
-            var results = new List<object>();
+            Dictionary<string, object> results = new Dictionary<string, object>();
+            HashSet<string> usedDefinitions = new HashSet<string>();
             parsedArgs = null;
             errorMessage = string.Empty;
             
-            if (rawArgs.Count < MinArgs)
+            foreach (ArgumentDefinition definition in ArgumentsDefinition)
             {
-                errorMessage = "Not enough arguments provided.";
-                return false;
+                if (definition.IsOptional)
+                    results[definition.Name] = definition.Type.IsValueType ? Activator.CreateInstance(definition.Type) : null;
             }
-            
-            for (int i = 0; i < ArgumentsDefinition.Count; i++)
-            {
-                var definition = ArgumentsDefinition[i];
-                
-                if (definition.IsNeedManyWords)
-                {
-                    if (definition.Type != typeof(string) || i != ArgumentsDefinition.Count - 1)
-                    {
-                        errorMessage = $"Internal command error: Greedy argument '{definition.Name}' is misconfigured.";
-                        return false;
-                    }
 
-                    if (rawArgs.Count > i)
-                        results.Add(rawArgs.Join(i));
-                    else if (!definition.IsOptional)
+            int argIndex = 0;
+            for (int i = 0; i < rawArgs.Count; i++)
+            {
+                string currentArg = rawArgs[i];
+                string argName = null;
+                string argValue = currentArg;
+
+                if (currentArg.Contains(":"))
+                {
+                    var parts = currentArg.Split(new[] { ':' }, 2);
+                    if (parts.Length != 2 || string.IsNullOrWhiteSpace(parts[0]) || string.IsNullOrWhiteSpace(parts[1]))
                     {
-                        errorMessage = $"Missing required argument '{definition.Name}'.";
+                        errorMessage = $"Invalid named argument format: '{currentArg}'. Use 'name:value'.";
                         return false;
                     }
-                    else
-                        results.Add(default(string));
-                    break;
+                    argName = parts[0].Trim();
+                    argValue = parts[1].Trim();
                 }
 
-                string currentArg = rawArgs[i];
-                if (currentArg == null)
+                ArgumentDefinition definition;
+                if (argName != null)
                 {
-                    if (definition.IsOptional)
+                    definition = ArgumentsDefinition.FirstOrDefault(d => d.Name.Equals(argName, StringComparison.OrdinalIgnoreCase));
+                    if (definition == null || !definition.IsNamed)
                     {
-                        results.Add(definition.Type.IsValueType ? Activator.CreateInstance(definition.Type) : null);
-                        continue;
+                        errorMessage = $"Unknown or non-named argument '{argName}'.";
+                        return false;
                     }
+                }
+                else
+                {
+                    definition = ArgumentsDefinition
+                        .Where(d => !usedDefinitions.Contains(d.Name) && (!d.IsNeedManyWords || argIndex == ArgumentsDefinition.Count - 1))
+                        .ElementAtOrDefault(argIndex);
+                    if (definition == null)
+                    {
+                        errorMessage = $"Too many positional arguments provided at position {argIndex + 1}.";
+                        return false;
+                    }
+                    argIndex++;
+                }
+
+                if (definition.IsNeedManyWords)
+                {
+                    if (definition.Type != typeof(string))
+                    {
+                        errorMessage = $"Greedy argument '{definition.Name}' must be of type string.";
+                        return false;
+                    }
+                    if (argName != null)
+                    {
+                        var remaining = string.Join(" ", rawArgs.Skip(i));
+                        results[definition.Name] = remaining;
+                        i = rawArgs.Count;
+                    }
+                    else
+                    {
+                        if (argIndex != ArgumentsDefinition.Count)
+                        {
+                            errorMessage = $"Greedy argument '{definition.Name}' must be the last argument.";
+                            return false;
+                        }
+                        results[definition.Name] = string.Join(" ", rawArgs.Skip(i));
+                        i = rawArgs.Count;
+                    }
+                }
+                else
+                {
+                    if (!ArgumentParser.TryParse(argValue, definition.Type, out var parsedValue, out var parseError, definition.Constructor))
+                    {
+                        errorMessage = $"Invalid value for argument '{definition.Name}': {parseError}";
+                        return false;
+                    }
+                    results[definition.Name] = parsedValue;
+                }
+
+                usedDefinitions.Add(definition.Name);
+            }
+            
+            foreach (var definition in ArgumentsDefinition)
+            {
+                if (!definition.IsOptional && !usedDefinitions.Contains(definition.Name))
+                {
                     errorMessage = $"Missing required argument '{definition.Name}'.";
                     return false;
                 }
-
-                if (!ArgumentParser.TryParse(currentArg, definition.Type, out var parsedValue, out var parseError))
-                {
-                    errorMessage = $"Invalid value for argument '{definition.Name}': {parseError}";
-                    return false;
-                }
-                results.Add(parsedValue);
             }
 
-            parsedArgs = results.ToArray();
+            parsedArgs = ArgumentsDefinition.Select(d => results.ContainsKey(d.Name) ? results[d.Name] : null).ToArray();
             return true;
         }
 

@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.Linq;
 using Exiled.API.Features;
 
@@ -67,5 +68,10 @@ namespace EnhancedCommands
         }
         
         public string Join(int startIndex = 0) => string.Join(" ", _args.Skip(startIndex));
+        
+        public IEnumerable<string> Skip(int count)
+        {
+            return _args.Skip(count);
+        }
     }
 }
