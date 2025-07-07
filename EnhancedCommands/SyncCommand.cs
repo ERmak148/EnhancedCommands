@@ -113,32 +113,39 @@ namespace EnhancedCommands
         private bool TryParseArguments(CommandArguments rawArgs, out Dictionary<string, object> parsedArgs, out string errorMessage)
         {
             parsedArgs = new Dictionary<string, object>();
-            HashSet<string> usedDefinitions = new HashSet<string>();
             errorMessage = string.Empty;
+            
+            var usedDefinitions = new HashSet<string>();
+            bool namedArgumentEncountered = false;
+            int definitionIndex = 0;
 
-            var positionalArgs = new List<string>();
             for (int i = 0; i < rawArgs.Count; i++)
             {
                 string currentArg = rawArgs[i];
+                ArgumentDefinition definition;
+                string value;
+
                 if (currentArg.Contains(":"))
                 {
+                    namedArgumentEncountered = true;
+                    
                     var parts = currentArg.Split(new[] { ':' }, 2);
                     if (parts.Length != 2 || string.IsNullOrWhiteSpace(parts[0]) || string.IsNullOrWhiteSpace(parts[1]))
                     {
                         errorMessage = $"Invalid named argument format: '{currentArg}'. Use 'name:value'.";
                         return false;
                     }
-                    
-                    string argName = parts[0].Trim();
-                    string argValue = parts[1].Trim();
 
-                    var definition = ArgumentsDefinition.FirstOrDefault(d => d.Name.Equals(argName, StringComparison.OrdinalIgnoreCase));
+                    string argName = parts[0].Trim();
+                    value = parts[1].Trim();
+
+                    definition = ArgumentsDefinition.FirstOrDefault(d => d.Name.Equals(argName, StringComparison.OrdinalIgnoreCase));
                     if (definition == null)
                     {
                         errorMessage = $"Unknown named argument '{argName}'.";
                         return false;
                     }
-                    
+
                     if (usedDefinitions.Contains(definition.Name))
                     {
                         errorMessage = $"Argument '{definition.Name}' has been provided more than once.";
@@ -147,91 +154,79 @@ namespace EnhancedCommands
                     
                     if (definition.IsNeedManyWords)
                     {
-                         if (definition.Type != typeof(string))
-                         {
-                             errorMessage = $"Greedy argument '{definition.Name}' must be of type string.";
-                             return false;
-                         }
-                        var remainingBuilder = new StringBuilder(argValue);
+                        if (definition.Type != typeof(string))
+                        {
+                            errorMessage = $"Greedy argument '{definition.Name}' must be of type string.";
+                            return false;
+                        }
+                        var remainingBuilder = new StringBuilder(value);
                         for (int j = i + 1; j < rawArgs.Count; j++)
                         {
                             remainingBuilder.Append(" ").Append(rawArgs[j]);
                         }
-                        argValue = remainingBuilder.ToString();
+                        value = remainingBuilder.ToString();
                         i = rawArgs.Count - 1;
                     }
-                    
-                    if (!ArgumentParser.TryParse(argValue, definition.Type, out var parsedValue, out var parseError, definition.Constructor))
+                }
+                else
+                {
+                    if (namedArgumentEncountered)
                     {
-                        errorMessage = $"Invalid value for argument '{definition.Name}': {parseError}";
+                        errorMessage = $"Positional arguments are not allowed after named arguments. Invalid argument: '{currentArg}'.";
                         return false;
                     }
-                    parsedArgs[definition.Name] = parsedValue;
-                    usedDefinitions.Add(definition.Name);
-                }
-                else
-                {
-                    positionalArgs.Add(currentArg);
-                }
-            }
 
-            int positionalArgIndex = 0;
-            while(positionalArgIndex < positionalArgs.Count)
-            {
-                var definition = ArgumentsDefinition
-                    .Where(d => !d.IsNamed && !usedDefinitions.Contains(d.Name))
-                    .FirstOrDefault();
-
-                if (definition == null)
-                {
-                    errorMessage = $"Too many positional arguments. Unexpected argument: '{positionalArgs[positionalArgIndex]}'";
-                    return false;
-                }
-
-                string argValue;
-                if (definition.IsNeedManyWords)
-                {
-                     if (definition.Type != typeof(string))
-                     {
-                         errorMessage = $"Greedy argument '{definition.Name}' must be of type string.";
-                         return false;
-                     }
-                     var remainingDefinitions = ArgumentsDefinition.Count(d => !d.IsNamed && !usedDefinitions.Contains(d.Name));
-                     if (remainingDefinitions > 1)
-                     {
-                         errorMessage = $"Greedy argument '{definition.Name}' must be the last positional argument.";
-                         return false;
-                     }
+                    definition = ArgumentsDefinition.FirstOrDefault(d => !usedDefinitions.Contains(d.Name));
                     
-                    argValue = string.Join(" ", positionalArgs.Skip(positionalArgIndex));
-                    positionalArgIndex = positionalArgs.Count;
-                }
-                else
-                {
-                    argValue = positionalArgs[positionalArgIndex];
-                    positionalArgIndex++;
-                }
+                    if (definition == null)
+                    {
+                        errorMessage = $"Too many arguments provided. Unexpected argument: '{currentArg}'";
+                        return false;
+                    }
+                    
+                    value = currentArg;
 
-                if (!ArgumentParser.TryParse(argValue, definition.Type, out var parsedValue, out var parseError, definition.Constructor))
+                    if (definition.IsNeedManyWords)
+                    {
+                        if (definition.Type != typeof(string))
+                        {
+                            errorMessage = $"Greedy argument '{definition.Name}' must be of type string.";
+                            return false;
+                        }
+                        var remainingDefinitions = ArgumentsDefinition.Count(d => !usedDefinitions.Contains(d.Name));
+                        if (remainingDefinitions > 1)
+                        {
+                            errorMessage = $"Greedy argument '{definition.Name}' must be the last argument.";
+                            return false;
+                        }
+                        
+                        value = string.Join(" ", rawArgs.Skip(i));
+                        i = rawArgs.Count - 1;
+                    }
+                }
+                
+                if (!ArgumentParser.TryParse(value, definition.Type, out var parsedValue, out var parseError, definition.Constructor))
                 {
                     errorMessage = $"Invalid value for argument '{definition.Name}': {parseError}";
                     return false;
                 }
+                
                 parsedArgs[definition.Name] = parsedValue;
                 usedDefinitions.Add(definition.Name);
             }
-            
-            foreach (var definition in ArgumentsDefinition)
+
+            foreach (var def in ArgumentsDefinition)
             {
-                if (!definition.IsOptional && !usedDefinitions.Contains(definition.Name))
+                if (!def.IsOptional && !usedDefinitions.Contains(def.Name))
                 {
-                    errorMessage = $"Missing required argument '{definition.Name}'.";
+                    errorMessage = $"Missing required argument '{def.Name}'.";
                     return false;
                 }
             }
 
             return true;
         }
+
 
         private string GenerateUsageFromDefinition()
         {

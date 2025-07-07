@@ -2,6 +2,7 @@
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
+using System.Text;
 using Exiled.API.Features;
 
 namespace EnhancedCommands
@@ -73,19 +74,18 @@ namespace EnhancedCommands
                     return false;
                 }
             }
-
-            var argValues = SplitArguments(value, parameters.Length);
+            
+            var argValues = SplitArguments(value);
             if (argValues.Length != parameters.Length)
             {
-                error = $"Expected {parameters.Length} arguments for '{type.Name}', but got {argValues.Length}.";
+                error = $"Expected {parameters.Length} constructor arguments for '{type.Name}', but got {argValues.Length}.";
                 return false;
             }
 
             var parsedParams = new object[parameters.Length];
             for (int i = 0; i < parameters.Length; i++)
             {
-                var paramType = parameters[i].ParameterType;
-                if (!TryParse(argValues[i], paramType, out var paramResult, out error))
+                if (!TryParse(argValues[i], parameters[i].ParameterType, out var paramResult, out error))
                 {
                     error = $"Failed to parse parameter '{parameters[i].Name}' for '{type.Name}': {error}";
                     return false;
@@ -100,50 +100,95 @@ namespace EnhancedCommands
             }
             catch (Exception ex)
             {
-                error = $"Failed to create instance of '{type.Name}' with provided arguments: {ex.Message}";
+                error = $"Failed to create instance of '{type.Name}' with provided arguments: {ex.InnerException?.Message ?? ex.Message}";
                 return false;
             }
         }
-
-        private static string[] SplitArguments(string input, int expectedCount)
+        
+        private static string[] SplitArguments(string input)
+        {
+            input = input.Trim();
+            if (input.StartsWith("[") && input.EndsWith("]"))
+            {
+                string inner = input.Substring(1, input.Length - 2);
+                return ParseBracketedArguments(inner);
+            }
+            else
+            {
+                return ParseCommaSeparatedArguments(input);
+            }
+        }
+        
+        private static string[] ParseBracketedArguments(string input)
         {
             var results = new List<string>();
-            int bracketLevel = 0;
+            var currentArgument = new StringBuilder();
+            int bracketDepth = 0;
             bool inQuotes = false;
-            string current = "";
 
             for (int i = 0; i < input.Length; i++)
             {
                 char c = input[i];
-                if (c == '[' && !inQuotes)
+
+                if (c == '"' && (i == 0 || input[i - 1] != '\\'))
                 {
-                    bracketLevel++;
-                    current += c;
+                    inQuotes = !inQuotes;
+                }
+                else if (c == '[' && !inQuotes)
+                {
+                    bracketDepth++;
                 }
                 else if (c == ']' && !inQuotes)
                 {
-                    bracketLevel--;
-                    current += c;
+                    bracketDepth--;
                 }
-                else if (c == '"' && (i == 0 || input[i - 1] != '\\'))
+                else if (c == ' ' && !inQuotes && bracketDepth == 0)
                 {
-                    inQuotes = !inQuotes;
-                    current += c;
+                    if (currentArgument.Length > 0)
+                    {
+                        results.Add(currentArgument.ToString().Trim());
+                        currentArgument.Clear();
+                    }
+                    continue;
                 }
-                else if (c == ',' && bracketLevel == 0 && !inQuotes)
-                {
-                    results.Add(current.Trim());
-                    current = "";
-                }
-                else
-                {
-                    current += c;
-                }
+
+                currentArgument.Append(c);
             }
 
-            if (!string.IsNullOrEmpty(current))
+            if (currentArgument.Length > 0)
             {
-                results.Add(current.Trim());
+                results.Add(currentArgument.ToString().Trim());
+            }
+
+            return results.ToArray();
+        }
+
+        private static string[] ParseCommaSeparatedArguments(string input)
+        {
+            var results = new List<string>();
+            var current = new StringBuilder();
+            int bracketLevel = 0;
+            bool inQuotes = false;
+
+            for (int i = 0; i < input.Length; i++)
+            {
+                char c = input[i];
+                if (c == '[' && !inQuotes) bracketLevel++;
+                else if (c == ']' && !inQuotes) bracketLevel--;
+                else if (c == '"' && (i == 0 || input[i - 1] != '\\')) inQuotes = !inQuotes;
+                else if (c == ',' && bracketLevel == 0 && !inQuotes)
+                {
+                    results.Add(current.ToString().Trim());
+                    current.Clear();
+                    continue;
+                }
+                
+                current.Append(c);
+            }
+
+            if (current.Length > 0)
+            {
+                results.Add(current.ToString().Trim());
             }
 
             return results.ToArray();
