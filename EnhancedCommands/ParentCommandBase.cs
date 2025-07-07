@@ -123,7 +123,7 @@ namespace EnhancedCommands
             
             foreach (var command in SubCommands.Distinct())
             {
-                string usageHint = (command as IUsageProvider)?.Usage.FirstOrDefault() ?? "[args...]";
+                string usageHint = string.Join(" ", (command as IUsageProvider)?.Usage) ?? "[args...]";
                 string description = "No description.";
                 if (command is SyncCommand syncCmd)
                 {
