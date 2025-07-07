@@ -116,14 +116,10 @@ namespace EnhancedCommands
             HashSet<string> usedDefinitions = new HashSet<string>();
             errorMessage = string.Empty;
 
-            int argIndex = 0;
+            var positionalArgs = new List<string>();
             for (int i = 0; i < rawArgs.Count; i++)
             {
                 string currentArg = rawArgs[i];
-                string argName = null;
-                string argValue = currentArg;
-
-                // Обработка именованных аргументов
                 if (currentArg.Contains(":"))
                 {
                     var parts = currentArg.Split(new[] { ':' }, 2);
@@ -132,83 +128,105 @@ namespace EnhancedCommands
                         errorMessage = $"Invalid named argument format: '{currentArg}'. Use 'name:value'.";
                         return false;
                     }
-                    argName = parts[0].Trim();
-                    argValue = parts[1].Trim();
-                }
+                    
+                    string argName = parts[0].Trim();
+                    string argValue = parts[1].Trim();
 
-                ArgumentDefinition definition;
-                if (argName != null)
-                {
-                    // Именованный аргумент
-                    definition = ArgumentsDefinition.FirstOrDefault(d => d.Name.Equals(argName, StringComparison.OrdinalIgnoreCase));
+                    var definition = ArgumentsDefinition.FirstOrDefault(d => d.Name.Equals(argName, StringComparison.OrdinalIgnoreCase));
                     if (definition == null)
                     {
-                        errorMessage = $"Unknown argument '{argName}'.";
-                        return false;
-                    }
-                }
-                else
-                {
-                    // Позиционный аргумент
-                    if (argIndex >= ArgumentsDefinition.Count)
-                    {
-                        errorMessage = $"Too many positional arguments provided. Expected {ArgumentsDefinition.Count}, got {rawArgs.Count}.";
-                        return false;
-                    }
-                    definition = ArgumentsDefinition[argIndex];
-                    argIndex++;
-                }
-
-                // Обработка greedy аргументов
-                if (definition.IsNeedManyWords)
-                {
-                    if (definition.Type != typeof(string))
-                    {
-                        errorMessage = $"Greedy argument '{definition.Name}' must be of type string.";
+                        errorMessage = $"Unknown named argument '{argName}'.";
                         return false;
                     }
                     
-                    if (argName != null)
+                    if (usedDefinitions.Contains(definition.Name))
                     {
-                        // Для именованных greedy аргументов берем остаток строки после ':'
-                        var remaining = string.Join(" ", rawArgs.Skip(i));
-                        parsedArgs[definition.Name] = remaining;
-                        break;
+                        errorMessage = $"Argument '{definition.Name}' has been provided more than once.";
+                        return false;
                     }
-                    else
+                    
+                    if (definition.IsNeedManyWords)
                     {
-                        // Для позиционных greedy аргументов берем все оставшиеся аргументы
-                        parsedArgs[definition.Name] = string.Join(" ", rawArgs.Skip(i));
-                        break;
+                         if (definition.Type != typeof(string))
+                         {
+                             errorMessage = $"Greedy argument '{definition.Name}' must be of type string.";
+                             return false;
+                         }
+                        var remainingBuilder = new StringBuilder(argValue);
+                        for (int j = i + 1; j < rawArgs.Count; j++)
+                        {
+                            remainingBuilder.Append(" ").Append(rawArgs[j]);
+                        }
+                        argValue = remainingBuilder.ToString();
+                        i = rawArgs.Count - 1;
                     }
-                }
-                else
-                {
-                    // Обычный аргумент
+                    
                     if (!ArgumentParser.TryParse(argValue, definition.Type, out var parsedValue, out var parseError, definition.Constructor))
                     {
                         errorMessage = $"Invalid value for argument '{definition.Name}': {parseError}";
                         return false;
                     }
                     parsedArgs[definition.Name] = parsedValue;
+                    usedDefinitions.Add(definition.Name);
+                }
+                else
+                {
+                    positionalArgs.Add(currentArg);
+                }
+            }
+
+            int positionalArgIndex = 0;
+            while(positionalArgIndex < positionalArgs.Count)
+            {
+                var definition = ArgumentsDefinition
+                    .Where(d => !d.IsNamed && !usedDefinitions.Contains(d.Name))
+                    .FirstOrDefault();
+
+                if (definition == null)
+                {
+                    errorMessage = $"Too many positional arguments. Unexpected argument: '{positionalArgs[positionalArgIndex]}'";
+                    return false;
                 }
 
+                string argValue;
+                if (definition.IsNeedManyWords)
+                {
+                     if (definition.Type != typeof(string))
+                     {
+                         errorMessage = $"Greedy argument '{definition.Name}' must be of type string.";
+                         return false;
+                     }
+                     var remainingDefinitions = ArgumentsDefinition.Count(d => !d.IsNamed && !usedDefinitions.Contains(d.Name));
+                     if (remainingDefinitions > 1)
+                     {
+                         errorMessage = $"Greedy argument '{definition.Name}' must be the last positional argument.";
+                         return false;
+                     }
+                    
+                    argValue = string.Join(" ", positionalArgs.Skip(positionalArgIndex));
+                    positionalArgIndex = positionalArgs.Count;
+                }
+                else
+                {
+                    argValue = positionalArgs[positionalArgIndex];
+                    positionalArgIndex++;
+                }
+
+                if (!ArgumentParser.TryParse(argValue, definition.Type, out var parsedValue, out var parseError, definition.Constructor))
+                {
+                    errorMessage = $"Invalid value for argument '{definition.Name}': {parseError}";
+                    return false;
+                }
+                parsedArgs[definition.Name] = parsedValue;
                 usedDefinitions.Add(definition.Name);
             }
             
-            // Проверяем, что все обязательные аргументы предоставлены
             foreach (var definition in ArgumentsDefinition)
             {
                 if (!definition.IsOptional && !usedDefinitions.Contains(definition.Name))
                 {
                     errorMessage = $"Missing required argument '{definition.Name}'.";
                     return false;
-                }
-                
-                // Устанавливаем значения по умолчанию для опциональных аргументов
-                if (definition.IsOptional && !usedDefinitions.Contains(definition.Name))
-                {
-                    parsedArgs[definition.Name] = definition.Type.IsValueType ? Activator.CreateInstance(definition.Type) : null;
                 }
             }
 
