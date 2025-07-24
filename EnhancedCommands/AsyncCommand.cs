@@ -16,9 +16,9 @@ namespace EnhancedCommands
         {
             None,
             Legacy, // OnExecuteAsync(context, onDone)
-            Modern  // OnExecuteAsync(context, args, onDone)
+            Modern // OnExecuteAsync(context, args, onDone)
         }
-        
+
         private readonly Command _commandAttribute;
         private readonly CommandPermission _permissionAttribute;
         private readonly OverrideType _implementedOverride;
@@ -29,7 +29,7 @@ namespace EnhancedCommands
 
         public virtual int MinArgs { get; protected set; }
         public virtual string[] Usage { get; protected set; }
-        
+
         public virtual IReadOnlyList<ArgumentDefinition> ArgumentsDefinition { get; } = null;
 
         public bool SanitizeResponse { get; } = false;
@@ -52,8 +52,11 @@ namespace EnhancedCommands
                 MinArgs = ArgumentsDefinition.Count(a => !a.IsOptional);
                 Usage = new[] { GenerateUsageFromDefinition() };
             }
-            var modernMethod = type.GetMethod(nameof(OnExecuteAsync), BindingFlags.Instance | BindingFlags.NonPublic, null, new[] { typeof(CommandContext), typeof(object[]), typeof(Action<CommandResponse>) }, null);
-            var legacyMethod = type.GetMethod(nameof(OnExecuteAsync), BindingFlags.Instance | BindingFlags.NonPublic, null, new[] { typeof(CommandContext), typeof(Action<CommandResponse>) }, null);
+
+            var modernMethod = type.GetMethod(nameof(OnExecuteAsync), BindingFlags.Instance | BindingFlags.NonPublic,
+                null, new[] { typeof(CommandContext), typeof(object[]), typeof(Action<CommandResponse>) }, null);
+            var legacyMethod = type.GetMethod(nameof(OnExecuteAsync), BindingFlags.Instance | BindingFlags.NonPublic,
+                null, new[] { typeof(CommandContext), typeof(Action<CommandResponse>) }, null);
 
             if (modernMethod != null && modernMethod.DeclaringType == type)
                 _implementedOverride = OverrideType.Modern;
@@ -62,15 +65,19 @@ namespace EnhancedCommands
             else
                 _implementedOverride = OverrideType.None;
         }
-        
-        protected virtual IEnumerator<float> OnExecuteAsync(CommandContext context, Action<CommandResponse> onDone) => null;
-        protected virtual IEnumerator<float> OnExecuteAsync(CommandContext context, Dictionary<string, object> args, Action<CommandResponse> onDone) => null;
+
+        protected virtual IEnumerator<float> OnExecuteAsync(CommandContext context, Action<CommandResponse> onDone) =>
+            null;
+
+        protected virtual IEnumerator<float> OnExecuteAsync(CommandContext context, Dictionary<string, object> args,
+            Action<CommandResponse> onDone) => null;
 
         public bool Execute(ArraySegment<string> arguments, ICommandSender sender, out string response)
         {
             if (_permissionAttribute != null && !sender.CheckPermission(_permissionAttribute.Permission))
             {
-                response = $"You do not have permission to use this command. Required: {_permissionAttribute.Permission}";
+                response =
+                    $"You do not have permission to use this command. Required: {_permissionAttribute.Permission}";
                 return false;
             }
 
@@ -80,51 +87,54 @@ namespace EnhancedCommands
                 Log.Error(response);
                 return false;
             }
-            
+
             var context = new CommandContext(sender, new CommandArguments(arguments));
-            
+
             if (_implementedOverride == OverrideType.Modern)
             {
                 if (ArgumentsDefinition == null || !ArgumentsDefinition.Any())
                 {
-                     response = $"Internal command error: Command '{Command}' implements the modern execution method but provides no ArgumentDefinition.";
-                     Log.Error(response);
-                     return false;
+                    response =
+                        $"Internal command error: Command '{Command}' implements the modern execution method but provides no ArgumentDefinition.";
+                    Log.Error(response);
+                    return false;
                 }
-                
+
                 if (!TryParseArguments(context.Arguments, out var parsedArgs, out var errorMessage))
                 {
                     response = $"{errorMessage}\nUsage: {Command} {Usage.FirstOrDefault()}";
                     return false;
                 }
-                
+
                 Timing.RunCoroutine(ExecutionCoroutine(context, parsedArgs));
                 response = "Command execution started...";
                 return true;
             }
-            
+
             if (_implementedOverride == OverrideType.Legacy)
             {
                 if (context.Arguments.Count < MinArgs)
-                { 
+                {
                     response = "Invalid usage. Usage: " + string.Join("\n", Usage.Select(u => $"{Command} {u}"));
                     return false;
                 }
+
                 Timing.RunCoroutine(ExecutionCoroutine(context));
                 response = "Command execution started...";
                 return true;
             }
+
             response = "Could not execute command due to an internal configuration error.";
             return false;
         }
-        
+
         private IEnumerator<float> ExecutionCoroutine(CommandContext context, Dictionary<string, object> parsedArgs)
         {
             CommandResponse finalResponse = default;
             Action<CommandResponse> onDone = resp => finalResponse = resp;
-            
+
             var coroutine = OnExecuteAsync(context, parsedArgs, onDone);
-            
+
             if (coroutine != null)
                 yield return Timing.WaitUntilDone(coroutine);
             else
@@ -146,127 +156,126 @@ namespace EnhancedCommands
             else
                 Log.Warn($"Async command '{Command}' returned a null coroutine. This may be unintentional.");
 
-            if(!string.IsNullOrEmpty(finalResponse.Message))
+            if (!string.IsNullOrEmpty(finalResponse.Message))
                 context.Sender.Respond(finalResponse.Message, finalResponse.IsSuccess);
         }
-        
+
         #region Argument Parsing
-        private bool TryParseArguments(CommandArguments rawArgs, out Dictionary<string, object> parsedArgs, out string errorMessage)
+
+        private bool TryParseArguments(CommandArguments rawArgs, out Dictionary<string, object> parsedArgs,
+            out string errorMessage)
         {
             parsedArgs = new Dictionary<string, object>();
-            HashSet<string> usedDefinitions = new HashSet<string>();
             errorMessage = string.Empty;
 
-            var positionalArgs = new List<string>();
+            var usedDefinitions = new HashSet<string>();
+            bool namedArgumentEncountered = false;
+
             for (int i = 0; i < rawArgs.Count; i++)
             {
                 string currentArg = rawArgs[i];
+                ArgumentDefinition definition;
+                string value;
+
                 if (currentArg.Contains(":"))
                 {
+                    namedArgumentEncountered = true;
+
                     var parts = currentArg.Split(new[] { ':' }, 2);
                     if (parts.Length != 2 || string.IsNullOrWhiteSpace(parts[0]) || string.IsNullOrWhiteSpace(parts[1]))
                     {
                         errorMessage = $"Invalid named argument format: '{currentArg}'. Use 'name:value'.";
                         return false;
                     }
-                    
-                    string argName = parts[0].Trim();
-                    string argValue = parts[1].Trim();
 
-                    var definition = ArgumentsDefinition.FirstOrDefault(d => d.Name.Equals(argName, StringComparison.OrdinalIgnoreCase));
+                    string argName = parts[0].Trim();
+                    value = parts[1].Trim();
+
+                    definition = ArgumentsDefinition.FirstOrDefault(d =>
+                        d.Name.Equals(argName, StringComparison.OrdinalIgnoreCase));
                     if (definition == null)
                     {
                         errorMessage = $"Unknown named argument '{argName}'.";
                         return false;
                     }
-                    
+
                     if (usedDefinitions.Contains(definition.Name))
                     {
                         errorMessage = $"Argument '{definition.Name}' has been provided more than once.";
                         return false;
                     }
-                    
+
                     if (definition.IsNeedManyWords)
                     {
-                         if (definition.Type != typeof(string))
-                         {
-                             errorMessage = $"Greedy argument '{definition.Name}' must be of type string.";
-                             return false;
-                         }
-                        var remainingBuilder = new StringBuilder(argValue);
-                        for (int j = i + 1; j < rawArgs.Count; j++)
+                        if (definition.Type != typeof(string))
                         {
-                            remainingBuilder.Append(" ").Append(rawArgs[j]);
+                            errorMessage = $"Greedy argument '{definition.Name}' must be of type string.";
+                            return false;
                         }
-                        argValue = remainingBuilder.ToString();
-                        i = rawArgs.Count - 1;
+
+                        if (i < rawArgs.Count - 1)
+                        {
+                            errorMessage = $"Greedy named argument '{definition.Name}' must be the last argument.";
+                            return false;
+                        }
+
+                        value = HandleGreedyValue(value, rawArgs, ref i);
                     }
-                    
-                    if (!ArgumentParser.TryParse(argValue, definition.Type, out var parsedValue, out var parseError, definition.Constructor))
+                }
+                else
+                {
+                    if (namedArgumentEncountered)
                     {
-                        errorMessage = $"Invalid value for argument '{definition.Name}': {parseError}";
+                        errorMessage =
+                            $"Positional arguments are not allowed after named arguments. Invalid argument: '{currentArg}'.";
                         return false;
                     }
-                    parsedArgs[definition.Name] = parsedValue;
-                    usedDefinitions.Add(definition.Name);
-                }
-                else
-                {
-                    positionalArgs.Add(currentArg);
-                }
-            }
-            
-            int positionalArgIndex = 0;
-            while(positionalArgIndex < positionalArgs.Count)
-            {
-                var definition = ArgumentsDefinition
-                    .Where(d => !d.IsNamed && !usedDefinitions.Contains(d.Name))
-                    .FirstOrDefault();
 
-                if (definition == null)
-                {
-                    errorMessage = $"Too many positional arguments. Unexpected argument: '{positionalArgs[positionalArgIndex]}'";
-                    return false;
-                }
+                    definition = ArgumentsDefinition.FirstOrDefault(d => !usedDefinitions.Contains(d.Name));
 
-                string argValue;
-                if (definition.IsNeedManyWords)
-                {
-                     if (definition.Type != typeof(string))
-                     {
-                         errorMessage = $"Greedy argument '{definition.Name}' must be of type string.";
-                         return false;
-                     }
-                     var remainingDefinitions = ArgumentsDefinition.Count(d => !d.IsNamed && !usedDefinitions.Contains(d.Name));
-                     if (remainingDefinitions > 1)
-                     {
-                         errorMessage = $"Greedy argument '{definition.Name}' must be the last positional argument.";
-                         return false;
-                     }
-                    
-                    argValue = string.Join(" ", positionalArgs.Skip(positionalArgIndex));
-                    positionalArgIndex = positionalArgs.Count;
-                }
-                else
-                {
-                    argValue = positionalArgs[positionalArgIndex];
-                    positionalArgIndex++;
+                    if (definition == null)
+                    {
+                        errorMessage = $"Too many arguments provided. Unexpected argument: '{currentArg}'";
+                        return false;
+                    }
+
+                    value = currentArg;
+
+                    if (definition.IsNeedManyWords)
+                    {
+                        if (definition.Type != typeof(string))
+                        {
+                            errorMessage = $"Greedy argument '{definition.Name}' must be of type string.";
+                            return false;
+                        }
+
+                        var remainingDefinitions = ArgumentsDefinition.Count(d => !usedDefinitions.Contains(d.Name));
+                        if (remainingDefinitions > 1)
+                        {
+                            errorMessage = $"Greedy argument '{definition.Name}' must be the last argument.";
+                            return false;
+                        }
+
+                        value = HandleGreedyValue(value, rawArgs, ref i);
+                    }
                 }
 
-                if (!ArgumentParser.TryParse(argValue, definition.Type, out var parsedValue, out var parseError, definition.Constructor))
+                if (!ArgumentParser.TryParse(value, definition.Type, out var parsedValue, out var parseError,
+                        definition.Constructor))
                 {
                     errorMessage = $"Invalid value for argument '{definition.Name}': {parseError}";
                     return false;
                 }
+
                 parsedArgs[definition.Name] = parsedValue;
                 usedDefinitions.Add(definition.Name);
             }
-            
-            foreach (var definition in ArgumentsDefinition)
+
+            foreach (var def in ArgumentsDefinition)
             {
-                if (!definition.IsOptional && !usedDefinitions.Contains(definition.Name))
+                if (!def.IsOptional && !usedDefinitions.Contains(def.Name))
                 {
-                    errorMessage = $"Missing required argument '{definition.Name}'.";
+                    errorMessage = $"Missing required argument '{def.Name}'.";
                     return false;
                 }
             }
@@ -274,6 +283,41 @@ namespace EnhancedCommands
             return true;
         }
 
+        private string HandleGreedyValue(string initialValue, CommandArguments rawArgs, ref int i)
+        {
+            var sb = new StringBuilder(initialValue);
+
+            bool isQuoted = initialValue.StartsWith("\"\"") && !initialValue.EndsWith("\"\"");
+            if (isQuoted)
+            {
+                for (int j = i + 1; j < rawArgs.Count; j++)
+                {
+                    sb.Append(" ").Append(rawArgs[j]);
+                    if (rawArgs[j].EndsWith("\"\""))
+                    {
+                        i = j;
+                        break;
+                    }
+                }
+
+                string quotedValue = sb.ToString().Trim();
+                if (quotedValue.StartsWith("\"\"") && quotedValue.EndsWith("\"\""))
+                {
+                    return quotedValue.Substring(2, quotedValue.Length - 4).Trim();
+                }
+            }
+            else
+            {
+                for (int j = i + 1; j < rawArgs.Count; j++)
+                {
+                    sb.Append(" ").Append(rawArgs[j]);
+                }
+
+                i = rawArgs.Count - 1;
+            }
+
+            return sb.ToString().Trim();
+        }
 
         private string GenerateUsageFromDefinition()
         {
@@ -282,11 +326,12 @@ namespace EnhancedCommands
             {
                 if (definition.IsOptional)
                     sb.Append($"[{definition.Name} ({definition.Type.Name})] ");
-                else if(definition.IsNeedManyWords)
+                else if (definition.IsNeedManyWords)
                     sb.Append($"<{definition.Name} ({definition.Type.Name})...> ");
                 else
                     sb.Append($"<{definition.Name} ({definition.Type.Name})> ");
             }
+
             return sb.ToString().Trim();
         }
         #endregion

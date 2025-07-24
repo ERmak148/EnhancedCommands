@@ -9,23 +9,79 @@ namespace EnhancedCommands
 {
     public static class ArgumentParser
     {
-        public static bool TryParse(string value, Type type, out object result, out string error, ConstructorInfo constructor = null)
+        public static bool TryParse(string value, Type type, out object result, out string error,
+            ConstructorInfo constructor = null)
         {
             result = null;
             error = string.Empty;
 
-            if (type == typeof(string)) { result = value; return true; }
-            if (type == typeof(int)) { if (int.TryParse(value, out var i)) { result = i; return true; } error = "Expected a whole number."; return false; }
-            if (type == typeof(float)) { if (float.TryParse(value, out var f)) { result = f; return true; } error = "Expected a number."; return false; }
-            if (type == typeof(double)) { if (double.TryParse(value, out var d)) { result = d; return true; } error = "Expected a number."; return false; }
-            if (type == typeof(byte)) { if (byte.TryParse(value, out var b)) { result = b; return true; } error = "Expected a number between 0 and 255."; return false; }
+            if (type == typeof(string))
+            {
+                result = value;
+                return true;
+            }
+
+            if (type == typeof(int))
+            {
+                if (int.TryParse(value, out var i))
+                {
+                    result = i;
+                    return true;
+                }
+
+                error = "Expected a whole number.";
+                return false;
+            }
+
+            if (type == typeof(float))
+            {
+                if (float.TryParse(value, out var f))
+                {
+                    result = f;
+                    return true;
+                }
+
+                error = "Expected a number.";
+                return false;
+            }
+
+            if (type == typeof(double))
+            {
+                if (double.TryParse(value, out var d))
+                {
+                    result = d;
+                    return true;
+                }
+
+                error = "Expected a number.";
+                return false;
+            }
+
+            if (type == typeof(byte))
+            {
+                if (byte.TryParse(value, out var b))
+                {
+                    result = b;
+                    return true;
+                }
+
+                error = "Expected a number between 0 and 255.";
+                return false;
+            }
+
             if (type == typeof(bool))
             {
                 var args = new CommandArguments(new ArraySegment<string>(new[] { value }));
-                if (args.TryGetBool(0, out var bl)) { result = bl; return true; }
+                if (args.TryGetBool(0, out var bl))
+                {
+                    result = bl;
+                    return true;
+                }
+
                 error = "Expected true/false, yes/no, or 1/0.";
                 return false;
             }
+
             if (type.IsEnum)
             {
                 try
@@ -39,12 +95,69 @@ namespace EnhancedCommands
                     return false;
                 }
             }
+
             if (type == typeof(Player))
             {
                 var p = Player.Get(value);
-                if (p != null) { result = p; return true; }
+                if (p != null)
+                {
+                    result = p;
+                    return true;
+                }
+
                 error = "Player not found.";
                 return false;
+            }
+
+            if (type.IsGenericType && type.GetGenericTypeDefinition() == typeof(List<>))
+            {
+                var elementType = type.GetGenericArguments()[0];
+                var list = (System.Collections.IList)Activator.CreateInstance(type);
+
+                var elements = SplitArguments(value);
+                foreach (var el in elements)
+                {
+                    if (!TryParse(el, elementType, out var parsedEl, out error))
+                    {
+                        error = $"Failed to parse list element: {error}";
+                        return false;
+                    }
+
+                    list.Add(parsedEl);
+                }
+
+                result = list;
+                return true;
+            }
+
+            if (type == typeof(List<Player>))
+            {
+                var players = new List<Player>();
+                var elements = SplitArguments(value);
+
+                foreach (var el in elements)
+                {
+                    if (el == "*")
+                    {
+                        players.AddRange(Player.List);
+                    }
+                    else
+                    {
+                        var p = Player.Get(el);
+                        if (p != null)
+                        {
+                            players.Add(p);
+                        }
+                        else
+                        {
+                            error = $"Player not found: '{el}'.";
+                            return false;
+                        }
+                    }
+                }
+
+                result = players;
+                return true;
             }
 
             if (constructor == null)
@@ -74,11 +187,12 @@ namespace EnhancedCommands
                     return false;
                 }
             }
-            
+
             var argValues = SplitArguments(value);
             if (argValues.Length != parameters.Length)
             {
-                error = $"Expected {parameters.Length} constructor arguments for '{type.Name}', but got {argValues.Length}.";
+                error =
+                    $"Expected {parameters.Length} constructor arguments for '{type.Name}', but got {argValues.Length}.";
                 return false;
             }
 
@@ -90,6 +204,7 @@ namespace EnhancedCommands
                     error = $"Failed to parse parameter '{parameters[i].Name}' for '{type.Name}': {error}";
                     return false;
                 }
+
                 parsedParams[i] = paramResult;
             }
 
@@ -100,31 +215,54 @@ namespace EnhancedCommands
             }
             catch (Exception ex)
             {
-                error = $"Failed to create instance of '{type.Name}' with provided arguments: {ex.InnerException?.Message ?? ex.Message}";
+                error =
+                    $"Failed to create instance of '{type.Name}' with provided arguments: {ex.InnerException?.Message ?? ex.Message}";
                 return false;
             }
         }
-        
+
         private static string[] SplitArguments(string input)
         {
             input = input.Trim();
-            if (input.StartsWith("[") && input.EndsWith("]"))
+            if (input.Length == 0) return Array.Empty<string>();
+
+            char openChar = input[0];
+            string inner;
+
+            if (openChar == '(' || openChar == '{' || openChar == '[')
             {
-                string inner = input.Substring(1, input.Length - 2);
-                return ParseBracketedArguments(inner);
+                char closeChar = openChar switch
+                {
+                    '(' => ')',
+                    '{' => '}',
+                    '[' => ']',
+                    _ => throw new ArgumentException($"Unexpected opening character: '{openChar}'")
+                };
+
+                if (!input.EndsWith(closeChar.ToString()))
+                {
+                    inner = input;
+                    return ParseSeparatedArguments(inner, ',', false, false);
+                }
+
+                inner = input.Substring(1, input.Length - 2).Trim();
+                return ParseSeparatedArguments(inner, ' ', true, true);
             }
             else
             {
-                return ParseCommaSeparatedArguments(input);
+                inner = input;
+                return ParseSeparatedArguments(inner, ',', false, false);
             }
         }
-        
-        private static string[] ParseBracketedArguments(string input)
+
+        private static string[] ParseSeparatedArguments(string input, char separator, bool allowSpaceSeparator,
+            bool allowNested)
         {
             var results = new List<string>();
-            var currentArgument = new StringBuilder();
-            int bracketDepth = 0;
+            var current = new StringBuilder();
+            int nestLevel = 0;
             bool inQuotes = false;
+            char? nestOpen = null;
 
             for (int i = 0; i < input.Length; i++)
             {
@@ -133,57 +271,40 @@ namespace EnhancedCommands
                 if (c == '"' && (i == 0 || input[i - 1] != '\\'))
                 {
                     inQuotes = !inQuotes;
+                    current.Append(c);
+                    continue;
                 }
-                else if (c == '[' && !inQuotes)
+
+                if (!inQuotes && allowNested)
                 {
-                    bracketDepth++;
-                }
-                else if (c == ']' && !inQuotes)
-                {
-                    bracketDepth--;
-                }
-                else if (c == ' ' && !inQuotes && bracketDepth == 0)
-                {
-                    if (currentArgument.Length > 0)
+                    if (c == '[' || c == '(' || c == '{')
                     {
-                        results.Add(currentArgument.ToString().Trim());
-                        currentArgument.Clear();
+                        if (nestLevel == 0)
+                        {
+                            nestOpen = c;
+                        }
+
+                        nestLevel++;
                     }
-                    continue;
+                    else if ((c == ']' && nestOpen == '[') || (c == ')' && nestOpen == '(') ||
+                             (c == '}' && nestOpen == '{'))
+                    {
+                        nestLevel--;
+                    }
                 }
 
-                currentArgument.Append(c);
-            }
-
-            if (currentArgument.Length > 0)
-            {
-                results.Add(currentArgument.ToString().Trim());
-            }
-
-            return results.ToArray();
-        }
-
-        private static string[] ParseCommaSeparatedArguments(string input)
-        {
-            var results = new List<string>();
-            var current = new StringBuilder();
-            int bracketLevel = 0;
-            bool inQuotes = false;
-
-            for (int i = 0; i < input.Length; i++)
-            {
-                char c = input[i];
-                if (c == '[' && !inQuotes) bracketLevel++;
-                else if (c == ']' && !inQuotes) bracketLevel--;
-                else if (c == '"' && (i == 0 || input[i - 1] != '\\')) inQuotes = !inQuotes;
-                else if (c == ',' && bracketLevel == 0 && !inQuotes)
+                if ((c == separator || (allowSpaceSeparator && c == ' ')) && nestLevel == 0 && !inQuotes)
                 {
-                    results.Add(current.ToString().Trim());
-                    current.Clear();
-                    continue;
+                    if (current.Length > 0)
+                    {
+                        results.Add(current.ToString().Trim());
+                        current.Clear();
+                    }
                 }
-                
-                current.Append(c);
+                else
+                {
+                    current.Append(c);
+                }
             }
 
             if (current.Length > 0)

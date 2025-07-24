@@ -110,15 +110,14 @@ namespace EnhancedCommands
             }
         }
         
-        private bool TryParseArguments(CommandArguments rawArgs, out Dictionary<string, object> parsedArgs, out string errorMessage)
+         private bool TryParseArguments(CommandArguments rawArgs, out Dictionary<string, object> parsedArgs, out string errorMessage)
         {
             parsedArgs = new Dictionary<string, object>();
             errorMessage = string.Empty;
             
             var usedDefinitions = new HashSet<string>();
             bool namedArgumentEncountered = false;
-            int definitionIndex = 0;
-
+           
             for (int i = 0; i < rawArgs.Count; i++)
             {
                 string currentArg = rawArgs[i];
@@ -159,13 +158,14 @@ namespace EnhancedCommands
                             errorMessage = $"Greedy argument '{definition.Name}' must be of type string.";
                             return false;
                         }
-                        var remainingBuilder = new StringBuilder(value);
-                        for (int j = i + 1; j < rawArgs.Count; j++)
+                        
+                        if (i < rawArgs.Count - 1)
                         {
-                            remainingBuilder.Append(" ").Append(rawArgs[j]);
+                            errorMessage = $"Greedy named argument '{definition.Name}' must be the last argument.";
+                            return false;
                         }
-                        value = remainingBuilder.ToString();
-                        i = rawArgs.Count - 1;
+                        
+                        value = HandleGreedyValue(value, rawArgs, ref i);
                     }
                 }
                 else
@@ -200,8 +200,7 @@ namespace EnhancedCommands
                             return false;
                         }
                         
-                        value = string.Join(" ", rawArgs.Skip(i));
-                        i = rawArgs.Count - 1;
+                        value = HandleGreedyValue(value, rawArgs, ref i);
                     }
                 }
                 
@@ -227,6 +226,39 @@ namespace EnhancedCommands
             return true;
         }
 
+        private string HandleGreedyValue(string initialValue, CommandArguments rawArgs, ref int i)
+        {
+            var sb = new StringBuilder(initialValue);
+            
+            bool isQuoted = initialValue.StartsWith("\"\"") && !initialValue.EndsWith("\"\"");
+            if (isQuoted)
+            {
+                for (int j = i + 1; j < rawArgs.Count; j++)
+                {
+                    sb.Append(" ").Append(rawArgs[j]);
+                    if (rawArgs[j].EndsWith("\"\""))
+                    {
+                        i = j;
+                        break;
+                    }
+                }
+                string quotedValue = sb.ToString().Trim();
+                if (quotedValue.StartsWith("\"\"") && quotedValue.EndsWith("\"\""))
+                {
+                    return quotedValue.Substring(2, quotedValue.Length - 4).Trim();
+                }
+            }
+            else
+            {
+                for (int j = i + 1; j < rawArgs.Count; j++)
+                {
+                    sb.Append(" ").Append(rawArgs[j]);
+                }
+                i = rawArgs.Count - 1;
+            }
+            
+            return sb.ToString().Trim();
+        }
 
         private string GenerateUsageFromDefinition()
         {
