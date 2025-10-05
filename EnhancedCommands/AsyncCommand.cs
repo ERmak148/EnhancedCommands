@@ -54,7 +54,7 @@ namespace EnhancedCommands
             }
 
             var modernMethod = type.GetMethod(nameof(OnExecuteAsync), BindingFlags.Instance | BindingFlags.NonPublic,
-                null, new[] { typeof(CommandContext), typeof(object[]), typeof(Action<CommandResponse>) }, null);
+                null, new[] { typeof(CommandContext), typeof(Dictionary<string, object>), typeof(Action<CommandResponse>) }, null);
             var legacyMethod = type.GetMethod(nameof(OnExecuteAsync), BindingFlags.Instance | BindingFlags.NonPublic,
                 null, new[] { typeof(CommandContext), typeof(Action<CommandResponse>) }, null);
 
@@ -195,19 +195,26 @@ namespace EnhancedCommands
         {
             var result = new List<string>();
             StringBuilder currentQuoted = null;
-    
+
             for (int i = 0; i < rawArgs.Count; i++)
             {
                 string arg = rawArgs[i];
-        
+            
                 if (currentQuoted != null)
                 {
                     currentQuoted.Append(" ").Append(arg);
-            
+                
                     if (arg.EndsWith("\""))
                     {
                         string fullText = currentQuoted.ToString();
-                        result.Add(fullText.Substring(1, fullText.Length - 2));
+                        if (fullText.StartsWith("\"") && fullText.EndsWith("\"") && fullText.Length >= 2)
+                        {
+                            result.Add(fullText.Substring(1, fullText.Length - 2));
+                        }
+                        else
+                        {
+                            result.Add(fullText);
+                        }
                         currentQuoted = null;
                     }
                 }
@@ -227,15 +234,23 @@ namespace EnhancedCommands
                     result.Add(arg);
                 }
             }
-    
+
             if (currentQuoted != null)
             {
-                result.Add(currentQuoted.ToString());
+                string unfinished = currentQuoted.ToString();
+                if (unfinished.StartsWith("\""))
+                {
+                    result.Add(unfinished.Substring(1));
+                }
+                else
+                {
+                    result.Add(unfinished);
+                }
             }
-    
+
             return result;
         }
-        
+
         private bool TryParseArguments(
             CommandArguments rawArgs, 
             out Dictionary<string, object> parsedArgs, 
@@ -290,19 +305,6 @@ namespace EnhancedCommands
                         errorMessage = $"Greedy argument '{definition.Name}' cannot be used with named syntax. " +
                                       $"Use positional syntax instead: <{definition.Name}>";
                         return false;
-                        
-                        /*
-                        if (string.IsNullOrWhiteSpace(value))
-                        {
-                            errorMessage = $"Greedy argument '{definition.Name}' in named syntax must have a value.";
-                            return false;
-                        }
-                        
-                        if (value.StartsWith("\"") && value.EndsWith("\"") && value.Length >= 2)
-                        {
-                            value = value.Substring(1, value.Length - 2);
-                        }
-                        */
                     }
                     
                     if (string.IsNullOrWhiteSpace(value))
@@ -365,7 +367,7 @@ namespace EnhancedCommands
                             return false;
                         }
                         
-                        value = HandleGreedyValue(value, rawArgs, ref i);
+                        value = HandleGreedyValue(value, processedArgs, ref i);
                     }
                 }
                 
@@ -391,53 +393,18 @@ namespace EnhancedCommands
             return true;
         }
 
-        private static string HandleGreedyValue(string initialValue, CommandArguments rawArgs, ref int currentIndex)
+        private static string HandleGreedyValue(string initialValue, List<string> processedArgs, ref int currentIndex)
         {
             StringBuilder sb = new StringBuilder(initialValue);
             
-            bool startsWithQuote = initialValue.StartsWith("\"");
-            bool endsWithQuote = initialValue.EndsWith("\"");
-            bool isQuoted = startsWithQuote && !endsWithQuote;
-    
-            if (isQuoted)
+            for (int j = currentIndex + 1; j < processedArgs.Count; j++)
             {
-                bool foundClosingQuote = false;
-        
-                for (int j = currentIndex + 1; j < rawArgs.Count; j++)
-                {
-                    sb.Append(" ").Append(rawArgs[j]);
-            
-                    if (rawArgs[j].EndsWith("\""))
-                    {
-                        currentIndex = j;
-                        foundClosingQuote = true;
-                        break;
-                    }
-                }
-        
-                string quotedValue = sb.ToString();
-                if (foundClosingQuote && 
-                    quotedValue.Length >= 2 && 
-                    quotedValue.StartsWith("\"") && 
-                    quotedValue.EndsWith("\""))
-                {
-                    return quotedValue.Substring(1, quotedValue.Length - 2);
-                }
-                return quotedValue;
+                sb.Append(" ").Append(processedArgs[j]);
             }
-            if (startsWithQuote && endsWithQuote && initialValue.Length >= 2)
-            {
-                return initialValue.Substring(1, initialValue.Length - 2);
-            }
-            for (int j = currentIndex + 1; j < rawArgs.Count; j++)
-            {
-                sb.Append(" ").Append(rawArgs[j]);
-            }
-    
-            currentIndex = rawArgs.Count - 1;
+
+            currentIndex = processedArgs.Count - 1;
             return sb.ToString();
         }
-        
         private string GenerateUsageFromDefinition()
         {
             var sb = new StringBuilder();
