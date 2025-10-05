@@ -14,8 +14,6 @@ namespace EnhancedCommands
         
         public bool IsNeedManyWords { get; set; } = false;
         
-        public bool IsNamed { get; set; } = false;
-        
         public ConstructorInfo Constructor { get; set; }
         
         public ParameterInfo[] ConstructorParameters { get; set; }

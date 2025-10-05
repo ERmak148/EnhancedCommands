@@ -162,106 +162,214 @@ namespace EnhancedCommands
 
         #region Argument Parsing
 
-        private bool TryParseArguments(CommandArguments rawArgs, out Dictionary<string, object> parsedArgs,
+        private static bool IsNamedArgument(string argument)
+        {
+            if (string.IsNullOrWhiteSpace(argument) || argument.Length < 3)
+                return false;
+
+            int colonIndex = argument.IndexOf(':');
+            return colonIndex > 0 && colonIndex < argument.Length - 1;
+        }
+        
+        private static bool ValidateNoNamedArgumentsAfter(CommandArguments args, int currentIndex)
+        {
+            for (int j = currentIndex + 1; j < args.Count; j++)
+            {
+                if (IsNamedArgument(args[j]))
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+        
+        private string GetAvailableArgumentNames()
+        {
+            if (ArgumentsDefinition == null || !ArgumentsDefinition.Any())
+                return "none";
+    
+            return string.Join(", ", ArgumentsDefinition.Select(d => d.Name));
+        }
+        
+        private List<string> ProcessQuotedArguments(CommandArguments rawArgs)
+        {
+            var result = new List<string>();
+            StringBuilder currentQuoted = null;
+    
+            for (int i = 0; i < rawArgs.Count; i++)
+            {
+                string arg = rawArgs[i];
+        
+                if (currentQuoted != null)
+                {
+                    currentQuoted.Append(" ").Append(arg);
+            
+                    if (arg.EndsWith("\""))
+                    {
+                        string fullText = currentQuoted.ToString();
+                        result.Add(fullText.Substring(1, fullText.Length - 2));
+                        currentQuoted = null;
+                    }
+                }
+                else if (arg.StartsWith("\""))
+                {
+                    if (arg.EndsWith("\"") && arg.Length > 1)
+                    {
+                        result.Add(arg.Substring(1, arg.Length - 2));
+                    }
+                    else
+                    {
+                        currentQuoted = new StringBuilder(arg);
+                    }
+                }
+                else
+                {
+                    result.Add(arg);
+                }
+            }
+    
+            if (currentQuoted != null)
+            {
+                result.Add(currentQuoted.ToString());
+            }
+    
+            return result;
+        }
+        
+        private bool TryParseArguments(
+            CommandArguments rawArgs, 
+            out Dictionary<string, object> parsedArgs, 
             out string errorMessage)
         {
             parsedArgs = new Dictionary<string, object>();
             errorMessage = string.Empty;
-
+            
+            List<string> processedArgs = ProcessQuotedArguments(rawArgs);
+            
             var usedDefinitions = new HashSet<string>();
             bool namedArgumentEncountered = false;
 
-            for (int i = 0; i < rawArgs.Count; i++)
+            for (int i = 0; i < processedArgs.Count; i++)
             {
-                string currentArg = rawArgs[i];
+                string currentArg = processedArgs[i];
                 ArgumentDefinition definition;
                 string value;
-
-                if (currentArg.Contains(":"))
+                
+                if (IsNamedArgument(currentArg))
                 {
                     namedArgumentEncountered = true;
 
                     var parts = currentArg.Split(new[] { ':' }, 2);
-                    if (parts.Length != 2 || string.IsNullOrWhiteSpace(parts[0]) || string.IsNullOrWhiteSpace(parts[1]))
+                    
+                    if (parts.Length != 2 || string.IsNullOrWhiteSpace(parts[0]))
                     {
-                        errorMessage = $"Invalid named argument format: '{currentArg}'. Use 'name:value'.";
+                        errorMessage = $"Invalid named argument format: '{currentArg}'. Expected format: 'name:value'.";
                         return false;
                     }
 
                     string argName = parts[0].Trim();
                     value = parts[1].Trim();
-
+                    
                     definition = ArgumentsDefinition.FirstOrDefault(d =>
                         d.Name.Equals(argName, StringComparison.OrdinalIgnoreCase));
+                    
                     if (definition == null)
                     {
-                        errorMessage = $"Unknown named argument '{argName}'.";
+                        errorMessage = $"Unknown argument '{argName}'. Available arguments: {GetAvailableArgumentNames()}.";
                         return false;
                     }
-
+                    
                     if (usedDefinitions.Contains(definition.Name))
                     {
                         errorMessage = $"Argument '{definition.Name}' has been provided more than once.";
                         return false;
                     }
-
+                    
                     if (definition.IsNeedManyWords)
                     {
-                        if (definition.Type != typeof(string))
+                        errorMessage = $"Greedy argument '{definition.Name}' cannot be used with named syntax. " +
+                                      $"Use positional syntax instead: <{definition.Name}>";
+                        return false;
+                        
+                        /*
+                        if (string.IsNullOrWhiteSpace(value))
                         {
-                            errorMessage = $"Greedy argument '{definition.Name}' must be of type string.";
+                            errorMessage = $"Greedy argument '{definition.Name}' in named syntax must have a value.";
                             return false;
                         }
-
-                        if (i < rawArgs.Count - 1)
+                        
+                        if (value.StartsWith("\"") && value.EndsWith("\"") && value.Length >= 2)
                         {
-                            errorMessage = $"Greedy named argument '{definition.Name}' must be the last argument.";
+                            value = value.Substring(1, value.Length - 2);
+                        }
+                        */
+                    }
+                    
+                    if (string.IsNullOrWhiteSpace(value))
+                    {
+                        if (definition.Type == typeof(string))
+                        {
+                            value = string.Empty;
+                        }
+                        else
+                        {
+                            errorMessage = $"Argument '{definition.Name}' cannot have an empty value.";
                             return false;
                         }
-
-                        value = HandleGreedyValue(value, rawArgs, ref i);
                     }
                 }
                 else
                 {
                     if (namedArgumentEncountered)
                     {
-                        errorMessage =
-                            $"Positional arguments are not allowed after named arguments. Invalid argument: '{currentArg}'.";
+                        errorMessage = $"Positional arguments are not allowed after named arguments. " +
+                                      $"Invalid argument: '{currentArg}'.";
                         return false;
                     }
-
+                    
                     definition = ArgumentsDefinition.FirstOrDefault(d => !usedDefinitions.Contains(d.Name));
 
                     if (definition == null)
                     {
-                        errorMessage = $"Too many arguments provided. Unexpected argument: '{currentArg}'";
+                        errorMessage = $"Too many arguments provided. Unexpected argument: '{currentArg}'. " +
+                                      $"Expected {ArgumentsDefinition.Count} argument(s).";
                         return false;
                     }
 
                     value = currentArg;
-
+                    
                     if (definition.IsNeedManyWords)
                     {
                         if (definition.Type != typeof(string))
                         {
-                            errorMessage = $"Greedy argument '{definition.Name}' must be of type string.";
+                            errorMessage = $"Greedy argument '{definition.Name}' must be of type string, " +
+                                          $"but is defined as {definition.Type.Name}.";
                             return false;
                         }
-
-                        var remainingDefinitions = ArgumentsDefinition.Count(d => !usedDefinitions.Contains(d.Name));
-                        if (remainingDefinitions > 1)
+                        var remainingDefinitions = ArgumentsDefinition
+                            .Where(d => !usedDefinitions.Contains(d.Name))
+                            .ToList();
+                        
+                        if (remainingDefinitions.Count > 1)
                         {
-                            errorMessage = $"Greedy argument '{definition.Name}' must be the last argument.";
+                            var nextDef = remainingDefinitions[1];
+                            errorMessage = $"Greedy argument '{definition.Name}' must be the last argument. " +
+                                          $"Found '{nextDef.Name}' after it.";
                             return false;
                         }
-
+                        
+                        if (!ValidateNoNamedArgumentsAfter(rawArgs, i))
+                        {
+                            errorMessage = $"Greedy argument '{definition.Name}' cannot be followed by named arguments. " +
+                                          $"All remaining tokens will be consumed.";
+                            return false;
+                        }
+                        
                         value = HandleGreedyValue(value, rawArgs, ref i);
                     }
                 }
-
-                if (!ArgumentParser.TryParse(value, definition.Type, out var parsedValue, out var parseError,
-                        definition.Constructor))
+                
+                if (!ArgumentParser.TryParse(value, definition.Type, out var parsedValue, out var parseError, definition.Constructor))
                 {
                     errorMessage = $"Invalid value for argument '{definition.Name}': {parseError}";
                     return false;
@@ -270,12 +378,12 @@ namespace EnhancedCommands
                 parsedArgs[definition.Name] = parsedValue;
                 usedDefinitions.Add(definition.Name);
             }
-
+            
             foreach (var def in ArgumentsDefinition)
             {
                 if (!def.IsOptional && !usedDefinitions.Contains(def.Name))
                 {
-                    errorMessage = $"Missing required argument '{def.Name}'.";
+                    errorMessage = $"Missing required argument '{def.Name}' ({def.Type.Name}).";
                     return false;
                 }
             }
@@ -283,42 +391,53 @@ namespace EnhancedCommands
             return true;
         }
 
-        private string HandleGreedyValue(string initialValue, CommandArguments rawArgs, ref int i)
+        private static string HandleGreedyValue(string initialValue, CommandArguments rawArgs, ref int currentIndex)
         {
-            var sb = new StringBuilder(initialValue);
-
-            bool isQuoted = initialValue.StartsWith("\"\"") && !initialValue.EndsWith("\"\"");
+            StringBuilder sb = new StringBuilder(initialValue);
+            
+            bool startsWithQuote = initialValue.StartsWith("\"");
+            bool endsWithQuote = initialValue.EndsWith("\"");
+            bool isQuoted = startsWithQuote && !endsWithQuote;
+    
             if (isQuoted)
             {
-                for (int j = i + 1; j < rawArgs.Count; j++)
+                bool foundClosingQuote = false;
+        
+                for (int j = currentIndex + 1; j < rawArgs.Count; j++)
                 {
                     sb.Append(" ").Append(rawArgs[j]);
-                    if (rawArgs[j].EndsWith("\"\""))
+            
+                    if (rawArgs[j].EndsWith("\""))
                     {
-                        i = j;
+                        currentIndex = j;
+                        foundClosingQuote = true;
                         break;
                     }
                 }
-
-                string quotedValue = sb.ToString().Trim();
-                if (quotedValue.StartsWith("\"\"") && quotedValue.EndsWith("\"\""))
+        
+                string quotedValue = sb.ToString();
+                if (foundClosingQuote && 
+                    quotedValue.Length >= 2 && 
+                    quotedValue.StartsWith("\"") && 
+                    quotedValue.EndsWith("\""))
                 {
-                    return quotedValue.Substring(2, quotedValue.Length - 4).Trim();
+                    return quotedValue.Substring(1, quotedValue.Length - 2);
                 }
+                return quotedValue;
             }
-            else
+            if (startsWithQuote && endsWithQuote && initialValue.Length >= 2)
             {
-                for (int j = i + 1; j < rawArgs.Count; j++)
-                {
-                    sb.Append(" ").Append(rawArgs[j]);
-                }
-
-                i = rawArgs.Count - 1;
+                return initialValue.Substring(1, initialValue.Length - 2);
             }
-
-            return sb.ToString().Trim();
+            for (int j = currentIndex + 1; j < rawArgs.Count; j++)
+            {
+                sb.Append(" ").Append(rawArgs[j]);
+            }
+    
+            currentIndex = rawArgs.Count - 1;
+            return sb.ToString();
         }
-
+        
         private string GenerateUsageFromDefinition()
         {
             var sb = new StringBuilder();
