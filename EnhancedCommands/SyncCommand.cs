@@ -2,7 +2,6 @@
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
-using System.Text;
 using CommandSystem;
 using Exiled.API.Features;
 using Exiled.Permissions.Extensions;
@@ -20,7 +19,7 @@ namespace EnhancedCommands
 
         public virtual int MinArgs { get; protected set; }
         public virtual string[] Usage { get; protected set; }
-        
+
         public virtual IReadOnlyList<ArgumentDefinition> ArgumentsDefinition { get; } = null;
 
         public virtual bool SanitizeResponse { get; } = false;
@@ -36,19 +35,22 @@ namespace EnhancedCommands
             Command = _commandAttribute.Name;
             Aliases = _commandAttribute.Aliases;
             Description = _commandAttribute.Description;
-            
+
+            CommandArgPreParser.ValidateArgumentsDefinition(ArgumentsDefinition, Command);
+
             if (ArgumentsDefinition != null && ArgumentsDefinition.Any())
             {
                 MinArgs = ArgumentsDefinition.Count(a => !a.IsOptional);
-                Usage = new[] { GenerateUsageFromDefinition() };
+                Usage = new[] { CommandArgPreParser.GenerateUsageFromDefinition(ArgumentsDefinition) };
             }
         }
+
         protected virtual CommandResponse OnExecuteSync(CommandContext context) =>
             throw new NotImplementedException($"Command {GetType().Name} must override one of the OnExecuteSync methods.");
 
         protected virtual CommandResponse OnExecuteSync(CommandContext context, Dictionary<string, object> args) =>
             throw new NotImplementedException($"Command {GetType().Name} must override one of the OnExecuteSync methods.");
-        
+
         public bool Execute(ArraySegment<string> arguments, ICommandSender sender, out string response)
         {
             if (_permissionAttribute != null && !sender.CheckPermission(_permissionAttribute.Permission))
@@ -58,15 +60,15 @@ namespace EnhancedCommands
             }
 
             var context = new CommandContext(sender, new CommandArguments(arguments));
-            
+
             if (ArgumentsDefinition != null && ArgumentsDefinition.Any())
             {
-                if (!TryParseArguments(context.Arguments, out var parsedArgs, out var errorMessage))
+                if (!CommandArgPreParser.TryParseArguments(context.Arguments, ArgumentsDefinition, out var parsedArgs, out var errorMessage))
                 {
                     response = $"{errorMessage}\nUsage: {Command} {Usage.FirstOrDefault()}";
                     return false;
                 }
-                
+
                 try
                 {
                     var cmdResponse = OnExecuteSync(context, parsedArgs);
@@ -84,10 +86,10 @@ namespace EnhancedCommands
                     return false;
                 }
             }
-            
+
             return ExecuteLegacy(context, out response);
         }
-        
+
         private bool ExecuteLegacy(CommandContext context, out string response)
         {
             if (context.Arguments.Count < MinArgs)
@@ -95,7 +97,7 @@ namespace EnhancedCommands
                 response = "Invalid usage. Usage: " + string.Join("\n", Usage.Select(u => $"{Command} {u}"));
                 return false;
             }
-            
+
             try
             {
                 var cmdResponse = OnExecuteSync(context);
@@ -108,263 +110,6 @@ namespace EnhancedCommands
                 response = "An internal error occurred.";
                 return false;
             }
-        }
-        private static bool IsNamedArgument(string argument)
-        {
-            if (string.IsNullOrWhiteSpace(argument) || argument.Length < 3)
-                return false;
-
-            int colonIndex = argument.IndexOf(':');
-            return colonIndex > 0 && colonIndex < argument.Length - 1;
-        }
-        
-        private static bool ValidateNoNamedArgumentsAfter(CommandArguments args, int currentIndex)
-        {
-            for (int j = currentIndex + 1; j < args.Count; j++)
-            {
-                if (IsNamedArgument(args[j]))
-                {
-                    return false;
-                }
-            }
-            return true;
-        }
-        
-        private string GetAvailableArgumentNames()
-        {
-            if (ArgumentsDefinition == null || !ArgumentsDefinition.Any())
-                return "none";
-    
-            return string.Join(", ", ArgumentsDefinition.Select(d => d.Name));
-        }
-        
-        private List<string> ProcessQuotedArguments(CommandArguments rawArgs)
-        {
-            var result = new List<string>();
-            StringBuilder currentQuoted = null;
-
-            for (int i = 0; i < rawArgs.Count; i++)
-            {
-                string arg = rawArgs[i];
-            
-                if (currentQuoted != null)
-                {
-                    currentQuoted.Append(" ").Append(arg);
-                
-                    if (arg.EndsWith("\""))
-                    {
-                        string fullText = currentQuoted.ToString();
-                        if (fullText.StartsWith("\"") && fullText.EndsWith("\"") && fullText.Length >= 2)
-                        {
-                            result.Add(fullText.Substring(1, fullText.Length - 2));
-                        }
-                        else
-                        {
-                            result.Add(fullText);
-                        }
-                        currentQuoted = null;
-                    }
-                }
-                else if (arg.StartsWith("\""))
-                {
-                    if (arg.EndsWith("\"") && arg.Length > 1)
-                    {
-                        result.Add(arg.Substring(1, arg.Length - 2));
-                    }
-                    else
-                    {
-                        currentQuoted = new StringBuilder(arg);
-                    }
-                }
-                else
-                {
-                    result.Add(arg);
-                }
-            }
-
-            if (currentQuoted != null)
-            {
-                string unfinished = currentQuoted.ToString();
-                if (unfinished.StartsWith("\""))
-                {
-                    result.Add(unfinished.Substring(1));
-                }
-                else
-                {
-                    result.Add(unfinished);
-                }
-            }
-
-            return result;
-        }
-
-        private bool TryParseArguments(
-            CommandArguments rawArgs, 
-            out Dictionary<string, object> parsedArgs, 
-            out string errorMessage)
-        {
-            parsedArgs = new Dictionary<string, object>();
-            errorMessage = string.Empty;
-            
-            List<string> processedArgs = ProcessQuotedArguments(rawArgs);
-            
-            var usedDefinitions = new HashSet<string>();
-            bool namedArgumentEncountered = false;
-
-            for (int i = 0; i < processedArgs.Count; i++)
-            {
-                string currentArg = processedArgs[i];
-                ArgumentDefinition definition;
-                string value;
-                
-                if (IsNamedArgument(currentArg))
-                {
-                    namedArgumentEncountered = true;
-
-                    var parts = currentArg.Split(new[] { ':' }, 2);
-                    
-                    if (parts.Length != 2 || string.IsNullOrWhiteSpace(parts[0]))
-                    {
-                        errorMessage = $"Invalid named argument format: '{currentArg}'. Expected format: 'name:value'.";
-                        return false;
-                    }
-
-                    string argName = parts[0].Trim();
-                    value = parts[1].Trim();
-                    
-                    definition = ArgumentsDefinition.FirstOrDefault(d =>
-                        d.Name.Equals(argName, StringComparison.OrdinalIgnoreCase));
-                    
-                    if (definition == null)
-                    {
-                        errorMessage = $"Unknown argument '{argName}'. Available arguments: {GetAvailableArgumentNames()}.";
-                        return false;
-                    }
-                    
-                    if (usedDefinitions.Contains(definition.Name))
-                    {
-                        errorMessage = $"Argument '{definition.Name}' has been provided more than once.";
-                        return false;
-                    }
-                    
-                    if (definition.IsNeedManyWords)
-                    {
-                        errorMessage = $"Greedy argument '{definition.Name}' cannot be used with named syntax. " +
-                                      $"Use positional syntax instead: <{definition.Name}>";
-                        return false;
-                    }
-                    
-                    if (string.IsNullOrWhiteSpace(value))
-                    {
-                        if (definition.Type == typeof(string))
-                        {
-                            value = string.Empty;
-                        }
-                        else
-                        {
-                            errorMessage = $"Argument '{definition.Name}' cannot have an empty value.";
-                            return false;
-                        }
-                    }
-                }
-                else
-                {
-                    if (namedArgumentEncountered)
-                    {
-                        errorMessage = $"Positional arguments are not allowed after named arguments. " +
-                                      $"Invalid argument: '{currentArg}'.";
-                        return false;
-                    }
-                    
-                    definition = ArgumentsDefinition.FirstOrDefault(d => !usedDefinitions.Contains(d.Name));
-
-                    if (definition == null)
-                    {
-                        errorMessage = $"Too many arguments provided. Unexpected argument: '{currentArg}'. " +
-                                      $"Expected {ArgumentsDefinition.Count} argument(s).";
-                        return false;
-                    }
-
-                    value = currentArg;
-                    
-                    if (definition.IsNeedManyWords)
-                    {
-                        if (definition.Type != typeof(string))
-                        {
-                            errorMessage = $"Greedy argument '{definition.Name}' must be of type string, " +
-                                          $"but is defined as {definition.Type.Name}.";
-                            return false;
-                        }
-                        var remainingDefinitions = ArgumentsDefinition
-                            .Where(d => !usedDefinitions.Contains(d.Name))
-                            .ToList();
-                        
-                        if (remainingDefinitions.Count > 1)
-                        {
-                            var nextDef = remainingDefinitions[1];
-                            errorMessage = $"Greedy argument '{definition.Name}' must be the last argument. " +
-                                          $"Found '{nextDef.Name}' after it.";
-                            return false;
-                        }
-                        
-                        if (!ValidateNoNamedArgumentsAfter(rawArgs, i))
-                        {
-                            errorMessage = $"Greedy argument '{definition.Name}' cannot be followed by named arguments. " +
-                                          $"All remaining tokens will be consumed.";
-                            return false;
-                        }
-                        
-                        value = HandleGreedyValue(value, processedArgs, ref i);
-                    }
-                }
-                
-                if (!ArgumentParser.TryParse(value, definition.Type, out var parsedValue, out var parseError, definition.Constructor))
-                {
-                    errorMessage = $"Invalid value for argument '{definition.Name}': {parseError}";
-                    return false;
-                }
-
-                parsedArgs[definition.Name] = parsedValue;
-                usedDefinitions.Add(definition.Name);
-            }
-            
-            foreach (var def in ArgumentsDefinition)
-            {
-                if (!def.IsOptional && !usedDefinitions.Contains(def.Name))
-                {
-                    errorMessage = $"Missing required argument '{def.Name}' ({def.Type.Name}).";
-                    return false;
-                }
-            }
-
-            return true;
-        }
-
-        private static string HandleGreedyValue(string initialValue, List<string> processedArgs, ref int currentIndex)
-        {
-            StringBuilder sb = new StringBuilder(initialValue);
-            
-            for (int j = currentIndex + 1; j < processedArgs.Count; j++)
-            {
-                sb.Append(" ").Append(processedArgs[j]);
-            }
-
-            currentIndex = processedArgs.Count - 1;
-            return sb.ToString();
-        }
-        private string GenerateUsageFromDefinition()
-        {
-            var sb = new StringBuilder();
-            foreach (var definition in ArgumentsDefinition)
-            {
-                if (definition.IsOptional)
-                    sb.Append($"[{definition.Name} ({definition.Type.Name})] ");
-                else if(definition.IsNeedManyWords)
-                    sb.Append($"<{definition.Name} ({definition.Type.Name})...> ");
-                else
-                    sb.Append($"<{definition.Name} ({definition.Type.Name})> ");
-            }
-            return sb.ToString().Trim();
         }
     }
 }
